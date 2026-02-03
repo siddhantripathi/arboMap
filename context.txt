@@ -1,0 +1,57 @@
+Project Overview
+ArboMAP forecasts mosquito-borne disease risk (e.g., WNV) using an ensemble of
+GAMs with lagged weather variables and mosquito infection metrics. The current
+implementation is a monolithic Rmd pipeline that loads data, constructs
+features, fits multiple models, aggregates outputs, and renders reports.
+
+Primary Goal
+Rewrite the system as a modular, local-only desktop app in Python, while
+maintaining output parity and accepting new datasets that match the required
+column schemas.
+
+Critical Rules (must follow)
+- Keep secrets and API tokens in .env at repo root; never hardcode.
+- Preserve the exact schema/semantics of data_combined:
+  var1, var2, var1_anom, var2_anom, lag, doymat, mir_stat.
+- Mosquito modeling + MIR imputation is a single module boundary.
+- Weather anomaly modeling + lag matrix creation is a single module boundary.
+- Never mix ID types (FIPS vs name). ID standardization is a hard gate.
+- Ensure deterministic outputs (fixed seeds, stable numeric tolerances).
+- Ensemble aggregation must remain identical (mean/min/max across models).
+- Report inputs must be explicit serializable objects (Parquet/Arrow/JSON).
+- Provide a single, versioned config file replacing Rmd parameters.
+
+Key Data Flow
+1) Load human, mosquito, weather, strata, spatial data.
+2) Standardize IDs (FIPS or name only) and dates (epiweek conversions).
+3) Mosquito model -> mir_stat_raw -> imputed/centered mir_stat.
+4) Weather processing -> anomalies -> lag matrices.
+5) Build data_combined with required fields and lag matrices.
+6) Fit GAMs using model formulas in data_models/models.txt.
+7) Aggregate models (mean/min/max) for ensemble outputs.
+8) Generate report from serialized inputs.
+
+Tightly Coupled Modules
+- Mosquito model + MIR imputation.
+- Weather anomalies + lag matrix creation + data_combined assembly.
+- GAM modeling + formula application + ensemble aggregation.
+
+Safely Extractable Modules
+- Data IO and validation.
+- ID standardization utilities.
+- Report rendering (once inputs are serialized).
+- Desktop UI and orchestration.
+
+Model Formulas
+Model formulas reference data_combined fields directly. Do not rename or
+reshape without updating formula parsing.
+
+Local-Only Desktop Requirements
+- No network dependency at runtime.
+- Bundle all resources and models locally.
+- Accept new datasets that follow the required schema.
+
+Output Parity Expectations
+- Predictions, evaluation metrics, and report charts should match current R
+  outputs within documented numeric tolerances.
+

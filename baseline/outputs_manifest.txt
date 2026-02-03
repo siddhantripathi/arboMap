@@ -1,0 +1,15 @@
+Baseline Outputs Manifest
+
+Captured files in baseline/outputs:
+- baseline_run_appx_data_env_appx_doy.csv
+- baseline_run_appx_data_env_fc_appx_yr.csv
+- baseline_run_data_combined_prep_humanmosq.csv
+- baseline_run_data_env_doy.csv
+- baseline_run_data_env_fc_yr.csv
+- baseline_run_data_env_hx.csv
+- baseline_run_evals_extra.csv
+- baseline_run_evals.csv
+- baseline_run_mir_full.csv
+- baseline_run_predictions.csv
+- baseline_run_report.html
+

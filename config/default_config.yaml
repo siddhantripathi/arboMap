@@ -1,0 +1,51 @@
+version: 1
+
+# Core run parameters (mirrors ArboMAP_forecast.Rmd defaults)
+forecast_date: "2018-08-15"
+state_name: "South Dakota"
+state_code: "SD"
+
+predictor_var1: "tmeanc"
+predictor_var2: "vpd"
+
+mosquito_model: "stratifiedMIGR"
+mosquito_doy_start: 140
+mosquito_doy_end: 366
+
+file_human: "data_human/simulated_human_data.csv"
+file_mosquito: "data_mosquito/simulated_mosquito_data.csv"
+file_strata: "data_strata/example_strata_SD.csv"
+file_county_sf: "data_spatial/sd_counties.RDS"
+file_models: "data_models/models.txt"
+folder_weather: "data_weather"
+
+year_human_start: 2004
+year_human_end: 2017
+year_mosquito_start: 2004
+year_mosquito_end: 2018
+year_weather_start: 2000
+year_weather_end: 2018
+
+year_compare_vis1: 2012
+year_compare_vis2: 2017
+
+create_appendix: true
+lag_length: 121
+case_trim_alpha: 0.02
+
+# Developer settings (should remain optional in app UI)
+dev_settings:
+  dev_write_output: false
+  model_evaluation: false
+  out_folder: "."
+  out_name_base: ""
+
+# Runtime options for desktop app (local-only)
+runtime:
+  deterministic: true
+  random_seed: 12345
+
+# Modeling backend selection
+modeling:
+  backend: "rpy2-mgcv"  # options: rpy2-mgcv, python-gam
+

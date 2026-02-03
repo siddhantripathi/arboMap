@@ -1,0 +1,69 @@
+2026-01-29 14:13:24 - Started plan step 1 by adding baseline capture scaffolding: created `baseline/` and `baseline/outputs/`, added `baseline/run_baseline.R` to render the Rmd with explicit params and dev outputs, added `baseline/README.txt` with run instructions, and added `baseline/tolerances.txt` template for parity thresholds.
+
+2026-01-29 14:42:13 - Captured baseline artifact list in `baseline/outputs_manifest.txt`, finalized initial parity tolerances in `baseline/tolerances.txt`, and confirmed baseline outputs are available for regression checks.
+
+2026-01-29 14:54:58 - Started plan step 2 by adding `config/default_config.yaml` aligned to Rmd defaults and `schema/inputs_schema.md` documenting required input schemas and ID-type gate rules.
+
+2026-01-29 14:58:31 - Started plan step 3 by scaffolding the Python package modules in `arbomap/` with placeholder boundaries for IO, ID standardization, mosquito MIR, weather processing, modeling, ensemble, reporting, and desktop app, plus a package README and pipeline stub.
+
+2026-01-29 15:09:07 - Finished step 3 by implementing config loading, input loading/validation, strict ID-type gating and standardization, and wiring a pipeline entrypoint to run IO and ID standardization.
+
+2026-01-29 15:12:49 - Completed step 3 robustness by adding file/folder existence checks, validating predictor variables, recording weather file timestamps, adding input summary helpers, and providing `scripts/validate_inputs.py` to run IO + validation on the real data.
+
+2026-01-29 15:39:00 - Normalized mosquito date column by loading `col_date` as `date`, and updated validation to require `date` consistently.
+
+2026-01-29 15:45:31 - Fixed `scripts/validate_inputs.py` to add the repo root to `sys.path` so the `arbomap` package can be imported when running the script directly.
+
+2026-01-29 15:48:59 - Added mosquito DOY derivation from `date` during input loading to satisfy schema requirements when `doy` is not provided.
+
+2026-01-29 15:53:30 - Ensured mosquito DOY derivation also runs during input validation to avoid stale loads without `doy`.
+
+2026-01-29 15:59:25 - Updated ID type detection to prefer name IDs when all datasets provide names (avoids mixed FIPS/name), and verified input validation succeeds.
+
+2026-01-30 08:48:09 - Started step 4 by recording the modeling backend strategy, adding backend selection helper, and extending config with a modeling backend option.
+
+2026-01-30 08:51:46 - Added local-only desktop app stub wiring: `arbomap/app/orchestrator.py` runs IO+ID standardization, `arbomap/app/desktop.py` launches a local run, and `scripts/run_desktop_stub.py` executes the stub from CLI.
+
+2026-01-30 08:53:09 - Fixed `arbomap/app/desktop.py` to add repo root to `sys.path` when executed directly, preventing import errors.
+
+2026-01-30 08:54:13 - Fixed desktop stub execution.
+
+Files: arbomap/app/desktop.py
+
+Details: added __main__ entrypoint to call launch_app so running the module prints the local run result.
+
+2026-01-30 09:02:11 - Added Tkinter desktop UI for local runs.
+
+Files: arbomap/app/ui_tk.py, arbomap/app/desktop.py
+
+Details: new Tk app with config picker, run button, status/output panel; desktop entrypoint now launches Tkinter UI.
+
+2026-02-02 11:50:43 - Implemented R/mgcv backend wiring and smoke test.
+
+Files: plan.txt, arbomap/modeling/r_backend.py, arbomap/modeling/gam.py, arbomap/modeling/backend.py, scripts/run_r_backend_smoke.py
+
+Details: added rpy2 mgcv backend with serializer for matrix columns, wired GAM entrypoint to rpy2 backend only, added smoke test to check baseline predictions shape and backend import (import failed due to missing rpy2).
+
+2026-02-03 11:02:51 - Fixed rpy2 conversion deprecation issue and verified backend import.
+
+Files: arbomap/modeling/r_backend.py
+
+Details: replaced pandas2ri.activate() with conversion.localconverter to avoid deprecated API; smoke test now reports rpy2/mgcv backend import OK.
+
+2026-02-03 11:04:58 - Completed rpy2 mgcv backend prediction flow.
+
+Files: arbomap/modeling/r_backend.py
+
+Details: added required-column checks, factor coercion for arbo_ID, modeled subset handling, and prediction frame assembly with metadata columns to mirror ArboMAP outputs.
+
+2026-02-03 11:45:53 - Ran latest-year R report and captured data_combined + metrics.
+
+Files: ArboMAP_forecast.Rmd, scripts/run_latest_year_report.R, runs/latest_year/*
+
+Details: added data_combined RDS output in Rmd (dev_write_output), executed latest-year report for 2018 (human through 2017), produced report + predictions + evals; summary metrics mean AUC=0.8413 (min 0.8366, max 0.8460), MAE_temporal=1.7363, MAE_spatial=0.7633, AIC mean=6705.06; data_combined shape 51612x17.
+2026-02-03 14:55:00 - Added UI progress indicator to Tkinter app.
+Files: arbomap/app/ui_tk.py
+Details: added indeterminate progress bar that starts during run and stops on completion/error.
+2026-02-03 14:57:17 - Added CLI progress output to full model run script.
+Files: scripts/run_full_model.py
+Details: added step-by-step console messages for R build, RDS load, model formula load, and GAM fitting.

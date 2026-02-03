@@ -2025,6 +2025,11 @@ rm(data_env_lag)
 rm(data_combined_prep)
 gc(verbose = FALSE)
 
+# save combined modeling data for parity checks
+if (dev_write_output){
+  saveRDS(data_combined, file = file.path(out_folder, paste0(out_name_base, "_data_combined.rds")))
+}
+
 ## Post-combining ---------------------------------------------------
 
 #store arbo_ID data type to unfactor later

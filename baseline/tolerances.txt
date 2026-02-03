@@ -1,0 +1,15 @@
+Parity Tolerances
+
+
+
+Baseline outputs have been captured. Initial tolerances:
+
+- Predictions (probabilities): abs_tol = 1e-6
+
+- Model evaluation metrics (AUC, etc.): abs_tol = 1e-4
+
+- Aggregated ensemble curves: abs_tol = 1e-6
+
+
+
+Adjust these after the first Python parity run if needed.

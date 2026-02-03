@@ -1,0 +1,105 @@
+Goal
+
+Create a desktop app that runs fully local, reproduces ArboMAP outputs, and
+
+accepts new datasets with the same feature columns.
+
+
+
+North Star
+
+Match the current R outputs as closely as possible (predictions, ensembles,
+
+reports) while modularizing the pipeline for maintainability and reuse.
+
+
+
+Phased Plan
+
+1) Baseline and parity targets
+
+   - Run the current R workflow on the sample data.
+
+   - Capture canonical outputs (predictions, evals, report figures/tables).
+
+   - Define acceptable numeric tolerances for model parity.
+
+
+
+2) Configuration and data contracts
+
+   - Create a versioned config file (YAML/JSON) mapping Rmd params.
+
+   - Document required input schemas for human, mosquito, weather, strata,
+
+     and spatial data.
+
+   - Enforce a strict "ID type" gate (FIPS or name only, never mixed).
+
+
+
+3) Modular pipeline in Python
+
+   - io: data loading, schema validation, ID standardization, date parsing.
+
+   - mosquito: MIR model + imputation as a single module boundary.
+
+   - env: weather cleaning + anomaly modeling + lag matrix creation.
+
+   - modeling: GAM fitting + formula parsing + ensemble aggregation.
+
+   - report: HTML/PDF rendering from serialized inputs.
+
+   - app: Tkinter desktop UI (local-only), pipeline orchestration, logging.
+
+
+
+4) Model implementation strategy
+
+   - Use R/mgcv via rpy2 for parity; no Python-native GAM in this phase.
+
+   - Keep ensemble aggregation identical (mean/min/max across models).
+
+   - Keep data_combined columns exactly: var1, var2, var1_anom, var2_anom,
+
+     lag, doymat, mir_stat.
+
+
+
+5) Report decoupling
+
+   - Persist all report inputs as explicit serializable objects
+
+     (Parquet/Arrow/JSON).
+
+   - Render HTML/PDF from those inputs only.
+
+
+
+6) Desktop packaging
+
+   - Use PySide6 or Tkinter.
+
+   - Bundle with PyInstaller for Windows.
+
+   - Ensure no network dependency at runtime.
+
+
+
+7) QA and regression tests
+
+   - Add automated tests comparing Python outputs to R outputs.
+
+   - Validate deterministic outputs (seeds, numeric tolerances).
+
+
+
+Deliverables
+
+- Python package with modular pipeline.
+
+- Desktop app with local execution.
+
+- Config file + schema docs.
+
+- Reproducibility tests against the current R baseline.

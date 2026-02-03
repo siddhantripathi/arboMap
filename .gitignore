@@ -5,3 +5,8 @@
 
 dev/*
 
+data_combined_build_data_combined.rdsr
+runs/
+*.rds
+*.pyc
+__pycache__/
