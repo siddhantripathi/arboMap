@@ -67,3 +67,6 @@ Details: added indeterminate progress bar that starts during run and stops on co
 2026-02-03 14:57:17 - Added CLI progress output to full model run script.
 Files: scripts/run_full_model.py
 Details: added step-by-step console messages for R build, RDS load, model formula load, and GAM fitting.
+2026-02-06 09:43:48 - Fixed RDS loading to use rpy2 instead of pyreadr for matrix columns.
+Files: arbomap/env/processing.py
+Details: replaced pyreadr with rpy2.robjects.readRDS() to handle data_combined RDS files containing matrix columns (var1, var2, lag, doymat); pyreadr fails on R data frames with matrix columns.
