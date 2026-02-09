@@ -53,20 +53,228 @@ Details: replaced pandas2ri.activate() with conversion.localconverter to avoid d
 2026-02-03 11:04:58 - Completed rpy2 mgcv backend prediction flow.
 
 Files: arbomap/modeling/r_backend.py
-
 Details: added required-column checks, factor coercion for arbo_ID, modeled subset handling, and prediction frame assembly with metadata columns to mirror ArboMAP outputs.
-
 2026-02-03 11:45:53 - Ran latest-year R report and captured data_combined + metrics.
-
 Files: ArboMAP_forecast.Rmd, scripts/run_latest_year_report.R, runs/latest_year/*
 
 Details: added data_combined RDS output in Rmd (dev_write_output), executed latest-year report for 2018 (human through 2017), produced report + predictions + evals; summary metrics mean AUC=0.8413 (min 0.8366, max 0.8460), MAE_temporal=1.7363, MAE_spatial=0.7633, AIC mean=6705.06; data_combined shape 51612x17.
 2026-02-03 14:55:00 - Added UI progress indicator to Tkinter app.
 Files: arbomap/app/ui_tk.py
 Details: added indeterminate progress bar that starts during run and stops on completion/error.
+
 2026-02-03 14:57:17 - Added CLI progress output to full model run script.
 Files: scripts/run_full_model.py
 Details: added step-by-step console messages for R build, RDS load, model formula load, and GAM fitting.
+
 2026-02-06 09:43:48 - Fixed RDS loading to use rpy2 instead of pyreadr for matrix columns.
 Files: arbomap/env/processing.py
 Details: replaced pyreadr with rpy2.robjects.readRDS() to handle data_combined RDS files containing matrix columns (var1, var2, lag, doymat); pyreadr fails on R data frames with matrix columns.
+
+2026-02-06 10:32:33 - Fix attempted: R data frame subsetting error when extracting scalar columns from RDS.
+Files: arbomap/env/processing.py
+Error: rpy2.rinterface_lib.embedded.RRuntimeError: Error in .subset2(x, i, exact = exact) : invalid subscript type 'list'
+Root cause (believed): rpy2's rx2[scalar_cols] doesn't accept Python lists for column subsetting; it expects individual column names or R vectors, not Python list objects.
+Fix approach: Changed from rx2[scalar_cols] to extracting scalar columns one-by-one using rx2(col) in a loop, then building DataFrame manually from extracted columns; also ensured matrix columns are converted to 2D arrays (shape 1 x lag_length) per row to match r_backend expectations.
+Status: Pending verification - awaiting user confirmation that RDS loading now works.
+
+2026-02-06 11:03:49 - Fix attempted: Matrix column assignment error when converting pandas DataFrame to R data frame for GAM fitting.
+Files: arbomap/modeling/r_backend.py
+Error: rpy2.rinterface_lib.embedded.RRuntimeError: Error in `[[<-.data.frame`(list(arbo_ID = c("anley", "anley", "anley",  : argument "value" is missing, with no default. Also warning: data length differs from size of matrix: [6296664 != 51612 x 1]
+Root cause (believed): Two issues: (1) `_stack_matrices` was creating 3D arrays (n_rows, 1, lag_length) instead of 2D (n_rows, lag_length) because each pandas Series element was shape (1, lag_length); (2) rpy2's `rx2[name] = r_matrix` assignment syntax may not work correctly for matrix columns in R data frames - R matrix columns require special handling.
+Fix attempts:
+  Attempt 1: Modified `_stack_matrices` to extract 1D arrays from (1, n_cols) matrices and use `np.vstack` to create proper 2D array (n_rows, n_cols). Result: Fixed matrix shape issue, but revealed new problem.
+  Attempt 2: Changed matrix column assignment to try `r_df[name] = r_matrix` first, with fallback to converting data frame to list, assigning matrix column, then rebuilding data frame using `as.data.frame()`. Result: Assignment syntax issue resolved, but new error appeared.
+  Attempt 3: Added validation to check matrix row count matches data frame row count. Result: Revealed that R data frame has only 11 rows after conversion instead of expected 51612 rows.
+Why failed: The pandas2ri conversion from pandas DataFrame to R data frame is collapsing/losing rows (51612 -> 11). This suggests the conversion process is removing duplicate rows, has issues with factor/character columns, or has index alignment problems. The matrix columns correctly have 51612 rows, but the scalar columns in the R data frame only have 11 rows after conversion.
+Status: Pending fix for row count mismatch - need to investigate why pandas2ri conversion loses rows.
+
+2026-02-06 11:14:04 - Fix attempted: Row count mismatch between pandas DataFrame and converted R data frame.
+Files: arbomap/modeling/r_backend.py, arbomap/env/processing.py
+Error: arbomap.modeling.r_backend.RBackendError: Matrix 'var1' row count 51612 doesn't match data frame rows 11
+Root cause (believed): When converting scalar DataFrame to R using `conversion.py2rpy(scalar_df)`, pandas2ri is collapsing the data frame from 51612 rows to 11 rows. Possible causes: (1) pandas2ri removing duplicate rows during conversion; (2) factor/character column conversion issues causing row deduplication; (3) index misalignment or reset during conversion; (4) some scalar columns having different lengths causing DataFrame construction to fail silently; (5) issue in RDS loading where scalar columns are extracted incorrectly.
+Fix attempts:
+  Attempt 1: Changed to use original DataFrame length (`len(df)`) instead of converted R data frame length (`len(r_df)`) for validation, and added explicit check to raise error if conversion loses rows. Result: Will help diagnose but doesn't fix root cause.
+  Attempt 2: Added validation in `_to_r_dataframe` to check scalar_df row count before conversion, and verify R data frame row count after conversion, with detailed error messages showing where rows are lost. Result: Better diagnostics but still need to find root cause.
+  Attempt 3: Added validation in `load_data_combined_rds` to verify all R columns have consistent lengths before conversion, verify DataFrame row count after building from scalar_dict, and verify matrix column row counts match expected. Result: Will catch issues earlier in the pipeline and provide better error messages to identify where rows are being lost.
+Why this should help: By adding validation at multiple points (RDS loading, DataFrame construction, R conversion), we can pinpoint exactly where the row count mismatch occurs. The error messages will show whether: (a) R columns have inconsistent lengths, (b) pandas conversion loses rows during RDS loading, (c) pandas2ri conversion loses rows when converting back to R, or (d) matrix columns have wrong row counts.
+Status: Pending verification - run script to see which validation check fails and where rows are being lost.
+
+2026-02-06 11:34:36 - Fix attempted: Added debug output and index reset to diagnose row count mismatch.
+Files: arbomap/modeling/r_backend.py
+Error: Still getting "Matrix 'var1' row count 51612 doesn't match data frame rows 11" - suggests len(df) is 11 when it should be 51612.
+Root cause (believed): The input DataFrame `df` to `_to_r_dataframe` appears to have only 11 rows instead of the expected 51612. This could be due to: (1) DataFrame index issues (non-contiguous or duplicate indices causing row loss during operations); (2) DataFrame being filtered/modified between loading and conversion; (3) Issue in how scalar columns are extracted causing row reduction.
+Fix attempts:
+  Attempt 1: Added debug output at start of `_to_r_dataframe` to print df.shape, scalar_df.shape, and matrix shapes to trace where row count changes.
+  Attempt 2: Added `reset_index(drop=True)` before converting scalar_df to R to ensure index doesn't cause row loss during pandas2ri conversion.
+  Attempt 3: Added input validation to check if DataFrame is empty or has invalid row count before processing.
+Why this should help: Debug output will show the actual shapes at each step, revealing whether: (a) df already has wrong row count when passed in, (b) _split_scalar_and_matrix is reducing rows, (c) scalar_df has wrong row count, or (d) conversion is losing rows. The index reset ensures pandas2ri doesn't have issues with non-standard indices.
+Status: Pending verification - run script to see debug output and identify exact point where rows are lost.
+
+2026-02-06 14:22:00 - MAJOR REFACTOR: Implemented Python-native preprocessing pipeline to eliminate R→Python→R round-trip.
+Files: arbomap/utils/logging.py, arbomap/utils/__init__.py, arbomap/mosquito/mir.py, arbomap/env/processing.py, arbomap/pipeline.py, scripts/run_python_pipeline.py
+Root cause of previous issues: The pandas2ri conversion was collapsing rows (51612 → 11) when converting pandas DataFrame back to R. This was caused by an unnecessary round-trip: R builds data_combined → Python loads RDS → Python converts back to R. The solution is to eliminate the round-trip by doing all preprocessing in Python.
+Implementation details:
+  - Created logging utility (arbomap/utils/logging.py) with setup_logger(), log_step(), log_error_with_context() for consistent logging throughout pipeline
+  - Implemented Python-native MIR calculation (arbomap/mosquito/mir.py):
+    * Uses rpy2 to call R's lme4::glmer for mixed-effects models (orchestrated from Python)
+    * Supports all models: simpleratio, AUC, MIGR, MII, stratifiedMIGR, stratifiedMII
+    * Implements MIR imputation with two methods: exactfit (impute as 0) or MIR-human model (linear regression)
+    * Handles both stratified and non-stratified models
+    * Includes comprehensive error handling and logging
+  - Implemented Python-native weather processing (arbomap/env/processing.py):
+    * Uses rpy2 to call R's mgcv::bam for weather anomalization (orchestrated from Python)
+    * Computes anomalies: observed - predicted for each weather variable
+    * Imputes missing weather values with bam predictions
+    * Creates lag matrices: expands grid of arbo_ID × date × lag, pivots to wide format, converts to numpy arrays
+    * Builds matrix columns: var1, var2, var1_anom, var2_anom, lag, doymat as lists of 2D arrays (1 x lag_length+1)
+  - Created pipeline orchestrator (arbomap/pipeline.py):
+    * run_pipeline() function orchestrates: config loading → input loading → ID standardization → MIR calculation → weather processing → data_combined assembly
+    * verify_data_combined() function for development-mode verification checks
+    * Comprehensive logging at each step
+    * Error handling with context
+  - Created new script (scripts/run_python_pipeline.py) to run the complete Python-native pipeline
+  - Deprecated build_data_combined_via_r() and load_data_combined_rds() functions (kept for backward compatibility but raise NotImplementedError)
+Key architectural changes:
+  - Flow changed from: Python → R (build) → Python (load RDS) → Python (convert to R) → R (fit GAMs)
+  - To: Python (preprocess) → Python (build data_combined) → Python (convert to R once) → R (fit GAMs)
+  - Eliminates round-trip conversion that was causing row collapse
+  - All preprocessing orchestrated from Python using rpy2 to call R functions (lme4, mgcv) as needed
+  - Data stays in Python until ready for GAM fitting, then converted to R once
+Guardrails and verification:
+  - Logging at every step with timestamps and context
+  - Error handling with detailed error messages and context
+  - Verification function checks: required columns, matrix shapes, row counts, missing values
+  - Development-mode verification can be enabled with verify=True flag
+Known issues/TODOs:
+  - Lag matrix creation needs proper alignment with human_dates (currently uses pivot_table which may not preserve order)
+  - Weather data date handling needs verification (handles both date_obs and doy/year combinations)
+  - Matrix column formatting: each row should have shape (1, lag_length+1) as 2D array - needs testing
+  - Integration with r_backend needs testing to ensure no row loss during final conversion
+  - MIR calculation for AUC model uses simplified approach (should use prediction grid like R version)
+Status: Implementation complete, ready for testing. Run scripts/run_python_pipeline.py to test the new Python-native pipeline.
+
+2026-02-06 14:25:26 - Cleanup: Removed redundant code from old R-based flow.
+Files: arbomap/env/processing.py, scripts/run_full_model.py
+Removed functions:
+  - build_data_combined_via_r(): Deprecated function that called R script to build data_combined
+  - load_data_combined_rds(): Deprecated function that loaded RDS files with matrix columns
+  - _find_data_combined_rds(): Helper function for finding RDS files (no longer needed)
+Updated files:
+  - scripts/run_full_model.py: Updated to use new Python-native pipeline (run_pipeline()) instead of old R-based approach
+    * Changed from: build_data_combined_via_r() → load_data_combined_rds() → fit_models()
+    * Changed to: run_pipeline() → fit_models()
+    * Now uses the same flow as scripts/run_python_pipeline.py
+Rationale: The old R-based functions were causing the pandas2ri row collapse issue. They are no longer needed since all preprocessing is now done in Python. Keeping them would create confusion and maintenance burden.
+Note: The R script scripts/build_data_combined.R still exists but is no longer used by the Python codebase. It may be kept for reference or comparison purposes.
+Status: Cleanup complete. All redundant code removed. Both scripts/run_full_model.py and scripts/run_python_pipeline.py now use the same Python-native pipeline.
+
+2026-02-06 14:35:11 - Fix: Import error for standardize_ids function.
+Files: arbomap/pipeline.py, arbomap/ids/__init__.py
+Error: ImportError: cannot import name 'standardize_ids' from 'arbomap.ids'
+Root cause: The standardize_ids function exists in arbomap/ids/standardize.py but was not exported in arbomap/ids/__init__.py. Also, pipeline.py was calling standardize_ids incorrectly - it takes a single DataFrame, not multiple DataFrames.
+Fix approach:
+  - Updated arbomap/ids/__init__.py to export detect_id_type, standardize_ids, and IdError
+  - Fixed pipeline.py to first call detect_id_type() to get id_type and field_name
+  - Then call standardize_ids() individually for each dataset (human, mosquito, weather, strata)
+  - This matches the pattern used in arbomap/app/orchestrator.py
+Status: Fixed. Import error resolved. Pipeline now correctly standardizes IDs for each dataset.
+
+2026-02-06 14:36:44 - Fix: AttributeError when detecting ID type - spatial data is a string path, not DataFrame.
+Files: arbomap/pipeline.py
+Error: AttributeError: 'str' object has no attribute 'columns' in detect_id_type() when processing spatial data
+Root cause: The load_inputs() function returns spatial as a file path string (for RDS spatial files), not a DataFrame. The detect_id_type() function expects DataFrames and tries to access .columns on all inputs, causing the error when it encounters the spatial string.
+Fix approach: Excluded spatial from the detect_id_type() call since it's a file path string, not a DataFrame that needs ID standardization. Spatial data is passed through as-is in the standardized dict.
+Status: Fixed. Pipeline now correctly handles spatial data as a file path string.
+
+2026-02-06 14:38:38 - Fix: Missing year_epi column in mosquito data - derive from date.
+Files: arbomap/mosquito/mir.py
+Error: KeyError: "['year_epi'] not in index" when trying to select columns for R conversion
+Root cause: The compute_mir() function expected mosquito_data to already have year_epi column, but the raw mosquito data only has a date column. year_epi needs to be derived from date using epiyear (CDC epiweeks year) calculation.
+Fix approach:
+  - Added logic to derive date_obs from date column if missing
+  - Added logic to derive year_epi from date_obs using epiyear calculation
+  - Uses epiweeks package if available (most accurate)
+  - Falls back to calendar year if epiweeks not available (with warning)
+  - Added validation to ensure all required columns exist before R conversion
+  - Added proper error messages for missing columns
+Rationale: The root cause was assuming pre-processed data. The function should handle raw mosquito data and derive all necessary fields (year_epi, doy) from the date column, matching the R pipeline behavior where year_epi = lubridate::epiyear(date_obs).
+Status: Fixed. MIR calculation now properly derives year_epi from date column. Note: For accurate epiyear calculation, install epiweeks package: pip install epiweeks
+
+2026-02-06 14:42:29 - Fix: RRuntimeError when assigning columns to R data frame - rx2 is read-only.
+Files: arbomap/mosquito/mir.py
+Error: RRuntimeError: Error in `[[<-.data.frame`(list(...)) : argument "value" is missing, with no default
+Root cause: The code was trying to assign new columns (dminus, stratum_year) to an R data frame using `r_mosq.rx2["dminus"] = ...`, but `rx2` is read-only and cannot be used for assignment. R data frames are immutable from Python's perspective when using rx2.
+Fix approach:
+  - Calculate dminus in Python before converting to R (centered DOY: doy - mean(doy))
+  - Calculate stratum_year in Python before converting to R (for stratified models)
+  - Include all needed columns (dminus, stratum_year) in the DataFrame before converting to R
+  - Only convert year_epi and stratum_year to factors in R after conversion (these are type conversions, not new columns)
+  - This ensures all data is prepared in Python, then converted to R once with all columns present
+Rationale: The root cause was attempting to modify R data structures from Python. The correct approach is to prepare all data in Python (where we have full control), then convert the complete DataFrame to R in one operation. This is more efficient and avoids R assignment syntax issues.
+Status: Fixed. MIR calculation now prepares all columns in Python before R conversion. Both non-stratified and stratified models fixed.
+
+2026-02-06 14:49:54 - Fix attempted: R data frame modification via `rx2` assignment doesn't work.
+Files: arbomap/mosquito/mir.py, arbomap/env/processing.py, arbomap/modeling/r_backend.py
+Error: RRuntimeError: Error in `[[<-.data.frame` : argument "value" is missing, with no default
+Root cause (believed): `rx2` assignment (`r_df.rx2["column"] = value`) does not work for modifying R data frames. This is a fundamental limitation of rpy2 - R data frames are immutable from Python's perspective when using `rx2`.
+Fix approach: 
+1. MIR calculation: Use R code execution (`robjects.r.assign()` and `robjects.r()`) to convert `year_epi` and `stratum_year` to factors after R conversion, avoiding rx2 assignment.
+2. Weather processing: Refactored to build complete DataFrame in Python with all columns (var1, var2, var1_anom, var2_anom) before R conversion. Process each variable by fitting bam in R, getting predictions back to Python, calculating anomalies in Python, then updating the DataFrame. Eliminates all rx2 assignments.
+3. R backend: Convert `arbo_ID` to categorical in Python before calling `_to_r_dataframe`, eliminating need for `_coerce_factor` which used rx2 assignment.
+Rationale: The root cause was attempting to modify R data structures from Python using rx2, which is read-only. The solution is to either prepare data in Python before conversion (preferred) or use R code execution to modify R objects (for type conversions like factor).
+Status: Partially complete - Non-stratified MIR models work. Weather processing refactored (needs testing). R backend factor conversion fixed. Stratified MIR models still have "Invalid grouping factor specification" error - may require different approach or deeper investigation of R's glmer factor requirements.
+
+2026-02-06 15:02:33 - Fix: Create stratum_year as categorical before R conversion and optimize weather processing.
+Files: arbomap/mosquito/mir.py, arbomap/env/processing.py
+Changes:
+1. Stratified MIR: Changed to create stratum_year as pd.Categorical before R conversion (matching original R code where factor is created in mutate before as.data.frame()). This ensures it becomes an R factor automatically during pandas2ri conversion.
+2. Weather Processing: Optimized from 2N R round-trips (N variables × 2 each) to 2 round-trips total. Now converts full DataFrame to R once, processes both variables in R, then converts back once.
+Root cause (believed): 
+- Stratified MIR: Creating factor after R conversion doesn't match original R code behavior and may not persist correctly.
+- Weather Processing: Multiple per-variable conversions are inefficient.
+Fix approach:
+- Create stratum_year as pd.Categorical in Python before R conversion, so it automatically becomes R factor.
+- Convert full weather DataFrame to R once, fit both bam models in R, get all predictions back, then calculate anomalies in Python.
+Status: Code changes complete. However, stratified MIR fails due to ID mismatch between mosquito data (lowercase district names) and strata data (capitalized county names) - this is a data standardization issue, not a code issue. The factor conversion itself works correctly (verified: factor type persists through as.data.frame()). Weather processing optimization implemented but not yet tested due to pipeline failure at MIR step.
+
+2026-02-06 15:06:36 - Fix: ID standardization - normalize names to lowercase.
+Files: arbomap/ids/standardize.py
+Error: ID mismatch between mosquito data (lowercase 'mellette') and strata data (capitalized 'Hand') causing 0 common IDs and merge failure.
+Root cause: standardize_ids() was preserving case differences. Original R code uses simplifynames() which converts to lowercase (tolower()).
+Fix approach: Added .str.lower() to name-based ID standardization to match original R behavior.
+Status: Complete - ID matching now works (28 common IDs, 16089 rows after merge). Stratified MIR calculation completes successfully.
+
+2026-02-06 15:07:13 - Fix: MIR imputation - derive year_epi from human data dates.
+Files: arbomap/mosquito/mir.py
+Error: KeyError: 'year_epi' in impute_mir when trying to groupby human_data by year_epi.
+Root cause: human_data passed to impute_mir doesn't have year_epi column derived yet.
+Fix approach: Derive year_epi from date/date_obs in impute_mir before grouping.
+Status: Complete - MIR imputation now works correctly.
+
+2026-02-06 15:08:37 - Fix: Weather processing - ensure this_var column persists in R data frame.
+Files: arbomap/env/processing.py
+Error: RRuntimeError: object 'this_var' not found when calling bam.
+Root cause: R code execution to add this_var column wasn't retrieving the modified data frame.
+Fix approach: Retrieve r_env from R global environment after modification: r_env = robjects.r["r_env"].
+Status: Complete - Weather anomalization now works for both variables.
+
+2026-02-06 15:16:19 - Fix: data_combined building - derive year_epi and date_epi from human data.
+Files: arbomap/env/processing.py
+Error: KeyError: 'year_epi' and 'date_epi' missing in data_combined for MIR merge and lag matrix creation.
+Root cause: human_data doesn't have year_epi/date_epi derived before being passed to build_data_combined.
+Fix approach: Derive year_epi from date in build_data_combined before MIR merge. Derive date_epi from date before lag matrix creation.
+Status: Complete - data_combined building progresses to lag matrix creation.
+
+2026-02-06 15:26:34 - Fix: Weather data - create date_obs from year and doy.
+Files: arbomap/env/processing.py
+Error: Weather date_obs range: NaT to NaT, causing 0 matching dates in lag matrix creation.
+Root cause: compute_weather_anomalies wasn't creating date_obs from year and doy when missing.
+Fix approach: Create date_obs from year and doy using pd.Timestamp(year + "-01-01") + timedelta(days=doy-1). Ensure year column is preserved through R conversion.
+Status: Complete - Weather date_obs now created correctly, dates match (3458 common dates).
+
+2026-02-06 15:45:45 - Fix: Lag matrix alignment - handle duplicate (arbo_ID, date_obs) combinations from strata.
+Files: arbomap/env/processing.py
+Error: Matrix has 13860 rows (unique combinations) but data_combined has 14740 rows (includes duplicates from strata).
+Root cause: Pivot tables have one row per unique (arbo_ID, date_obs), but data_combined has multiple rows per combination (due to strata). Alignment logic wasn't handling duplicates correctly.
+Fix approach: Return pivot_index from create_lag_matrices. Use pivot_index (unique combinations) to create matrix_df, then reindex to data_index (may have duplicates) which will repeat values for duplicate combinations. Fill NaN with 0.
+Status: Complete - Matrix alignment now handles duplicate combinations correctly. Pipeline progresses to verification step (missing week_epi column is separate issue).

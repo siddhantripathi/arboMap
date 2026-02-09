@@ -56,7 +56,9 @@ def standardize_ids(df: pd.DataFrame, id_type: str, field_name: str) -> pd.DataF
     if id_type == "fips":
         df["arbo_ID"] = _normalize_fips(df[field_name])
     elif id_type == "name":
-        df["arbo_ID"] = df[field_name].astype(str).str.strip()
+        # Normalize names: strip whitespace and convert to lowercase
+        # This matches the original R code's simplifynames() function which uses tolower()
+        df["arbo_ID"] = df[field_name].astype(str).str.strip().str.lower()
     else:
         raise IdError(f"Unknown id_type: {id_type}")
 

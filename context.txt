@@ -55,3 +55,40 @@ Output Parity Expectations
 - Predictions, evaluation metrics, and report charts should match current R
   outputs within documented numeric tolerances.
 
+Deployment & Runtime Risks (Critical for Desktop App)
+
+1. The Two-Runtime Problem (R + Python)
+   - Users must have compatible R version installed (R_HOME, PATH)
+   - Required R packages: lme4, mgcv, nlme (and dependencies)
+   - rpy2 environment variable sensitivity (R_HOME, PATH may be unset/wrong)
+   - First-run R package installation may fail without admin rights
+   - Corporate/academic environments often restrict R package installation
+
+2. Numerical & Model Drift
+   - R library version differences (mgcv, lme4) can change optimizer defaults
+   - nloptwrap optimizer changes in lme4 can cause singular fit warnings
+   - Factor level ordering differences (pd.Categorical vs R's as.factor())
+   - Reference level shifts can change intercept/dummy variable interpretations
+   - Small numerical differences compound through lag matrices
+
+3. Matrix Column Memory Trap
+   - R matrix columns stored in data frame cells are memory-intensive
+   - Python list of arrays → R matrix conversion creates transient memory spikes
+   - Large datasets (thousands of district-weeks) can cause OOM on older laptops
+   - Missing weather data: R handles NA gracefully, Python fills with 0 (bias risk)
+   - Alignment via reindex may mask missing data issues
+
+4. GUI & Threading Complications
+   - Blocking operations: run_pipeline() freezes UI for minutes during R fitting
+   - rpy2 is NOT thread-safe (segmentation faults if R called from background thread)
+   - R engine must be isolated from UI (QProcess or multiprocessing worker)
+   - Progress updates during R model fitting are difficult without blocking
+
+5. Data Integrity: Silent Failures
+   - ID standardization edge cases: "St." vs "Saint", "King's" vs "Kings"
+   - Non-ASCII characters in location names (accents, special punctuation)
+   - R's simplifynames() is regex-heavy; Python version must match exactly
+   - Epiweek edge cases: Year N Week 52 → Year N+1 Week 1 transitions
+   - Leap year handling differences (CDC epiweeks vs ISO weeks)
+   - Single-day shifts in epiweek calculation cascade to 7-day lag matrix shifts
+

@@ -94,6 +94,106 @@ Phased Plan
 
 
 
+8) Deployment Risk Mitigation & Detection
+
+   A. R Environment Detection & Validation
+
+      Detection:
+      - On app startup, check R_HOME and PATH for valid R installation
+      - Verify R version compatibility (e.g., >= 4.0.0)
+      - Test rpy2 connection: attempt import and basic R command execution
+      - Check for required packages: lme4, mgcv, nlme (via R's installed.packages())
+      - Log R version, package versions, and rpy2 version for diagnostics
+
+      Mitigation:
+      - Provide clear error messages with installation instructions if R missing
+      - Bundle R installation guide/installer link in app documentation
+      - Create diagnostic tool: "Check R Environment" button in GUI
+      - First-run wizard: detect R, attempt package installation, report success/failure
+      - Fallback: if R packages missing, show user-friendly error with package install commands
+      - Consider bundling portable R (if licensing allows) or providing installer
+
+   B. Numerical Parity Validation
+
+      Detection:
+      - Create "Parity Test" mode: run identical data through R and Python pipelines
+      - Compare MIR statistics (mir_stat_raw) between R and Python outputs
+      - Compare weather anomaly predictions (var1_anom, var2_anom) for sample dates
+      - Compare lag matrix values for known (arbo_ID, date_epi) combinations
+      - Check factor level ordering: log factor levels from R and Python, compare
+      - Monitor for singular fit warnings in lme4::glmer (may indicate factor issues)
+      - Store R package versions (lme4, mgcv) in config/metadata for reproducibility
+
+      Mitigation:
+      - Pin R package versions in documentation (e.g., lme4 >= 1.1.35, mgcv >= 1.9.0)
+      - Set explicit optimizer options in glmer() calls (control = lme4::lmerControl(...))
+      - Ensure factor level ordering matches R: sort pd.Categorical before conversion
+      - Add tolerance checks: warn if MIR differences > 1e-6, weather anomalies > 1e-4
+      - Create "Parity Report" that compares key statistics between R and Python runs
+      - Document acceptable numerical tolerances per output type
+
+   C. Memory & Performance Monitoring
+
+      Detection:
+      - Log memory usage before/after matrix column creation
+      - Monitor peak memory during Python→R conversion (rpy2 conversion)
+      - Track matrix alignment: count missing (arbo_ID, date_epi) combinations
+      - Warn if data_combined has > 10,000 rows (high memory risk)
+      - Profile conversion time: log duration of pandas2ri.py2rpy() calls
+
+      Mitigation:
+      - Chunk large datasets: process in batches if > threshold (e.g., 5000 rows)
+      - Use sparse matrices for lag matrices if possible (if R GAMs support)
+      - Handle missing weather data explicitly: mark as NA in R, don't fill with 0
+      - Add memory warning dialog: "Large dataset detected, may take X minutes"
+      - Provide progress bar with memory usage indicator
+      - Consider saving intermediate results to disk for very large datasets
+
+   D. GUI Threading & Responsiveness
+
+      Detection:
+      - Measure blocking time: log duration of run_pipeline() execution
+      - Test UI responsiveness: ensure progress bar updates during long operations
+      - Monitor for segmentation faults when R called from background thread
+      - Check for "Not Responding" state in Windows Task Manager during R fitting
+
+      Mitigation:
+      - Use QProcess (PySide6) or multiprocessing.Process for R operations
+      - Isolate R engine in separate process (not thread) to avoid segfaults
+      - Implement progress callbacks: update GUI from main thread, R runs in worker
+      - Add "Cancel" button that gracefully stops R process (if possible)
+      - Show "Processing..." dialog with progress bar during R model fitting
+      - Disable UI controls during processing to prevent concurrent operations
+      - Log R stdout/stderr to file for debugging if process crashes
+
+   E. Data Integrity Validation
+
+      Detection:
+      - Test ID standardization on edge cases: "St. Louis", "Saint Louis", "King's County"
+      - Validate epiweek calculations: check Year N Week 52 → Year N+1 Week 1 transitions
+      - Test leap year handling: verify epiweek calculations for Feb 29 dates
+      - Compare epiweek results: Python epiweeks package vs R lubridate::epiweek()
+      - Check for non-ASCII characters in location names (accents, special chars)
+      - Validate that ID standardization produces identical results to R simplifynames()
+
+      Mitigation:
+      - Create comprehensive ID standardization test suite with known edge cases
+      - Normalize special characters: convert "St." → "Saint", "King's" → "Kings"
+      - Use Unicode normalization (NFD/NFKC) for non-ASCII characters
+      - Add epiweek validation: compare Python and R epiweek calculations on test dates
+      - Document epiweek calculation method: CDC epiweeks (MMWR) vs ISO weeks
+      - Add data validation step: warn if ID standardization produces unexpected results
+      - Create "Data Validation Report" that flags potential ID mismatches
+
+   Implementation Priority:
+   1. R Environment Detection (Critical - app won't run without this)
+   2. GUI Threading (High - user experience)
+   3. Numerical Parity Validation (High - correctness)
+   4. Memory Monitoring (Medium - performance)
+   5. Data Integrity Validation (Medium - correctness)
+
+
+
 Deliverables
 
 - Python package with modular pipeline.
@@ -103,3 +203,5 @@ Deliverables
 - Config file + schema docs.
 
 - Reproducibility tests against the current R baseline.
+
+- Deployment risk mitigation tools (R environment checker, parity validator, diagnostic tools).

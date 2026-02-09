@@ -22,8 +22,14 @@ def fit_bam_models(
     _configure_r(robjects, config)
 
     _require_columns(data_combined, ["arbo_ID", "any_cases"])
-    r_df = _to_r_dataframe(robjects, pandas2ri, data_combined)
-    _coerce_factor(robjects, r_df, "arbo_ID")
+    
+    # Convert arbo_ID to categorical before R conversion (will become R factor automatically)
+    # This avoids the need for _coerce_factor which uses rx2 assignment (doesn't work)
+    data_combined_fixed = data_combined.copy()
+    if "arbo_ID" in data_combined_fixed.columns:
+        data_combined_fixed["arbo_ID"] = pd.Categorical(data_combined_fixed["arbo_ID"].astype(str))
+    
+    r_df = _to_r_dataframe(robjects, pandas2ri, data_combined_fixed)
 
     preds = []
     subset = _build_subset(robjects, r_df, "modeled")
@@ -69,20 +75,78 @@ def _configure_r(robjects, config: Dict[str, Any]) -> None:
 
 
 def _to_r_dataframe(robjects, pandas2ri, df: pd.DataFrame):
+    # Verify input DataFrame is valid
+    if df.empty:
+        raise RBackendError("Input DataFrame is empty")
+    if len(df) < 1:
+        raise RBackendError(f"Input DataFrame has invalid row count: {len(df)}")
+    
     scalar_df, matrices = _split_scalar_and_matrix(df)
     from rpy2.robjects import conversion
 
-    with conversion.localconverter(pandas2ri.converter):
-        r_df = conversion.py2rpy(scalar_df)
+    # Use original DataFrame length - conversion might alter row count
+    n_rows = len(df)
+    scalar_rows = len(scalar_df)
+    
+    # Debug output to trace row count
+    print(f"DEBUG _to_r_dataframe: Input df shape: {df.shape}")
+    print(f"DEBUG _to_r_dataframe: scalar_df shape: {scalar_df.shape}")
+    print(f"DEBUG _to_r_dataframe: Number of matrices: {len(matrices)}")
+    if matrices:
+        first_matrix_name = list(matrices.keys())[0]
+        print(f"DEBUG _to_r_dataframe: First matrix '{first_matrix_name}' shape: {matrices[first_matrix_name].shape}")
+    
+    # Debug: Check if scalar_df already has wrong row count
+    if scalar_rows != n_rows:
+        raise RBackendError(
+            f"Scalar DataFrame has wrong row count: expected {n_rows}, got {scalar_rows}. "
+            f"This suggests an issue in data loading or matrix column separation."
+        )
 
+    # Reset index to ensure all rows are preserved during conversion
+    # pandas2ri might have issues with non-contiguous or duplicate indices
+    scalar_df_reset = scalar_df.reset_index(drop=True)
+    
+    # Convert scalar columns to R data frame first
+    with conversion.localconverter(pandas2ri.converter):
+        r_df = conversion.py2rpy(scalar_df_reset)
+    
+    # Verify converted R data frame has correct row count
+    r_df_rows = len(r_df)
+    if r_df_rows != n_rows:
+        raise RBackendError(
+            f"R data frame conversion lost rows: expected {n_rows}, got {r_df_rows}. "
+            f"Scalar DataFrame had {scalar_rows} rows before conversion. "
+            f"This indicates pandas2ri conversion is collapsing rows - possible causes: "
+            f"duplicate row removal, factor/character conversion issues, or index misalignment."
+        )
     for name, matrix in matrices.items():
+        # Matrix should be shape (n_rows, n_cols) for R
+        if matrix.ndim != 2:
+            raise RBackendError(
+                f"Matrix '{name}' must be 2D, got shape {matrix.shape}"
+            )
+        if matrix.shape[0] != n_rows:
+            raise RBackendError(
+                f"Matrix '{name}' row count {matrix.shape[0]} doesn't match data frame rows {n_rows}"
+            )
+        
         r_matrix = robjects.r["matrix"](
             robjects.FloatVector(matrix.flatten(order="C")),
             nrow=matrix.shape[0],
             ncol=matrix.shape[1],
-            byrow=True,
+            byrow=False,  # R matrices are column-major by default
         )
-        r_df.rx2[name] = r_matrix
+        
+        # Try using r_df[name] instead of r_df.rx2[name]
+        # This should be equivalent to df$name <- matrix in R
+        try:
+            r_df[name] = r_matrix
+        except Exception:
+            # Fallback: use R's list assignment
+            r_list = robjects.r["as.list"](r_df)
+            r_list.rx2[name] = r_matrix
+            r_df = robjects.r["as.data.frame"](r_list, check_names=False)
 
     return r_df
 
@@ -104,6 +168,11 @@ def _split_scalar_and_matrix(
 
 
 def _stack_matrices(series: pd.Series, col: str) -> np.ndarray:
+    """Stack matrix rows into a single 2D array for R.
+    
+    Each element in the series should be a 2D array of shape (1, n_cols).
+    The result will be shape (n_rows, n_cols) suitable for R matrix columns.
+    """
     matrices = []
     shapes = set()
     for item in series.to_numpy():
@@ -112,13 +181,17 @@ def _stack_matrices(series: pd.Series, col: str) -> np.ndarray:
             raise RBackendError(
                 f"Matrix column '{col}' contains non-2D entries."
             )
+        # Squeeze to 1D if shape is (1, n) to get (n,)
+        if arr.shape[0] == 1:
+            arr = arr[0, :]  # Extract row to get 1D array
         matrices.append(arr)
         shapes.add(arr.shape)
     if len(shapes) != 1:
         raise RBackendError(
             f"Matrix column '{col}' has inconsistent shapes: {sorted(shapes)}"
         )
-    return np.stack(matrices)
+    # Stack 1D arrays into 2D array (n_rows, n_cols)
+    return np.vstack(matrices)
 
 
 def _build_subset(robjects, r_df, column: str):
@@ -127,10 +200,22 @@ def _build_subset(robjects, r_df, column: str):
     return robjects.r["as.logical"](r_df.rx2(column))
 
 
-def _coerce_factor(robjects, r_df, column: str) -> None:
+def _coerce_factor(robjects, r_df, column: str):
+    """DEPRECATED: Convert a column to factor in R.
+    
+    This function is deprecated. Convert columns to pd.Categorical in Python
+    before calling _to_r_dataframe instead. They will automatically become R factors.
+    
+    Kept for backward compatibility but should not be used.
+    """
     if column in r_df.names:
-        levels = robjects.r["levels"](robjects.r["factor"](r_df.rx2(column)))
-        r_df.rx2[column] = robjects.r["factor"](r_df.rx2(column), levels=levels)
+        # Use list conversion method (same as matrix columns)
+        r_list = robjects.r["as.list"](r_df)
+        col_values = r_df.rx2(column)
+        r_factor = robjects.r["factor"](col_values)
+        r_list.rx2[column] = r_factor
+        return robjects.r["as.data.frame"](r_list, check_names=False)
+    return r_df
 
 
 def _build_pred_frame(
